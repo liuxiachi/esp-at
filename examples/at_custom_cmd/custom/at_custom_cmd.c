@@ -8,55 +8,54 @@
 #include <stdbool.h>
 #include "esp_at.h"
 #include "driver/gpio.h"
-#include "driver/ledc.h"
 #include "esp_event.h"
 #include "esp_wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define IO0_PIN     GPIO_NUM_0
 #define IO1_PIN     GPIO_NUM_1
 
-/* 1Hz 50% 占空比 PWM 初始化（IO1） */
-static void io1_pwm_start(void)
-{
-    /* 第一步：配置定时器 */
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode       = LEDC_LOW_SPEED_MODE,  // ESP32-C3 只支持低速模式
-        .timer_num        = LEDC_TIMER_0,
-        .duty_resolution  = LEDC_TIMER_10_BIT,    // 10位分辨率，1024步
-        .freq_hz          = 1,                     // 1 Hz
-        .clk_cfg          = LEDC_AUTO_CLK,
-    };
-    ledc_timer_config(&ledc_timer);
+static TaskHandle_t s_io1_blink_handle = NULL;
 
-    /* 第二步：配置通道绑定 IO1 */
-    ledc_channel_config_t ledc_channel = {
-        .speed_mode     = LEDC_LOW_SPEED_MODE,
-        .channel        = LEDC_CHANNEL_0,
-        .timer_sel      = LEDC_TIMER_0,
-        .intr_type      = LEDC_INTR_DISABLE,
-        .gpio_num       = IO1_PIN,
-        .duty           = 512,   // 50% = 1024 / 2
-        .hpoint         = 0,
-    };
-    ledc_channel_config(&ledc_channel);
+/* IO1 闪烁任务：亮1秒、灭1秒循环 */
+static void io1_blink_task(void *pvParameters)
+{
+    while (1) {
+        gpio_set_level(IO1_PIN, 1);           // 绿灯亮
+        vTaskDelay(pdMS_TO_TICKS(1000));       // 等待 1 秒
+        gpio_set_level(IO1_PIN, 0);           // 绿灯灭
+        vTaskDelay(pdMS_TO_TICKS(1000));       // 等待 1 秒
+    }
 }
 
-/* Wi-Fi 事件处理：WIFI GOT IP 后执行 */
+/* Wi-Fi 事件处理：获取到 IP 后执行 */
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
-        /* IO0 拉低 */
+        /* IO0 拉低（红灯灭） */
         gpio_set_level(IO0_PIN, 0);
-        /* IO1 启动 1Hz PWM */
-        io1_pwm_start();
+
+        /* 启动 IO1 闪烁任务（防止重复创建） */
+        if (s_io1_blink_handle == NULL) {
+            xTaskCreate(io1_blink_task, "io1_blink", 2048, NULL, 5, &s_io1_blink_handle);
+        }
+    }else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        /* 断网：停止绿灯闪烁任务，绿灯灭，红灯亮 */
+        if (s_io1_blink_handle != NULL) {
+            vTaskDelete(s_io1_blink_handle);
+            s_io1_blink_handle = NULL;
+        }
+        gpio_set_level(IO1_PIN, 0);  // 绿灯灭
+        gpio_set_level(IO0_PIN, 1);  // 红灯亮
     }
 }
 
 /* 初始化函数，AT 启动时自动调用 */
 static bool at_custom_init(void)
 {
-    /* 配置 IO0：输出，上电拉高 */
+    /* 配置 IO0：输出，上电拉高（红灯亮） */
     gpio_config_t io0_conf = {
         .pin_bit_mask = (1ULL << IO0_PIN),
         .mode         = GPIO_MODE_OUTPUT,
@@ -67,7 +66,7 @@ static bool at_custom_init(void)
     gpio_config(&io0_conf);
     gpio_set_level(IO0_PIN, 1);  // 上电拉高
 
-    /* 配置 IO1：输出，上电拉低 */
+    /* 配置 IO1：输出，上电拉低（绿灯灭） */
     gpio_config_t io1_conf = {
         .pin_bit_mask = (1ULL << IO1_PIN),
         .mode         = GPIO_MODE_OUTPUT,
@@ -78,9 +77,12 @@ static bool at_custom_init(void)
     gpio_config(&io1_conf);
     gpio_set_level(IO1_PIN, 0);  // 上电拉低
 
-    /* 注册 Wi-Fi 事件回调 */
+    /* 注册 IP 事件回调 */
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                &wifi_event_handler, NULL);
+    /* 注册 Wi-Fi 断开事件回调 */
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED,
+                           &wifi_event_handler, NULL);
 
     return true;
 }
