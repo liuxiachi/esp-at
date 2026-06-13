@@ -4,7 +4,7 @@ file(GLOB_RECURSE srcs *.c)
 set(includes "include")
 
 # Add more required components you need here, separated by spaces
-set(require_components at freertos nvs_flash)
+set(require_components at freertos nvs_flash driver esp_event esp_wifi)
 
 idf_component_register(
     SRCS ${srcs}
@@ -12,3 +12,5 @@ idf_component_register(
     REQUIRES ${require_components})
 
 idf_component_set_property(${COMPONENT_NAME} WHOLE_ARCHIVE TRUE)
+
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-u at_custom_init")
