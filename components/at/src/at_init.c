@@ -45,8 +45,8 @@ esp_err_t at_wifi_init(void)
 {
     esp_err_t ret;
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    cfg.ampdu_rx_enable = 0;  // Disable AMPDU RX
-    cfg.ampdu_tx_enable = 0;  // Disable AMPDU TX
+    cfg.ampdu_rx_enable =  0;  // Disable AMPDU RX
+    cfg.ampdu_tx_enable =  0;  // Disable AMPDU TX
     ret = esp_wifi_init(&cfg);
     if (ret != ESP_OK) {
         return ret;
